@@ -10,12 +10,9 @@ namespace TC.Grains
         {
            string who =  this.GetPrimaryKeyString();
 
-            for (int i = 0; i < count; i++)
-            {
-
-                Console.WriteLine($"{who} say hello {i}");
-            }
-
+          
+                Console.WriteLine($"{who} say hello to user{count}");
+           
             return Task.CompletedTask;
         }
 

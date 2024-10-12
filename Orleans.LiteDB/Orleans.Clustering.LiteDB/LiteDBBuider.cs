@@ -1,4 +1,4 @@
-﻿using LiteDB.Async;
+﻿using LiteDB;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -8,13 +8,13 @@ using System.Threading.Tasks;
 namespace Orleans.Clustering.LiteDB
 {
     public interface ILiteDBBuider
-    { 
-        ILiteDatabaseAsync BuildLiteDB(string connectString);
+    {
+        ILiteDatabase BuildLiteDB(string connectString);
 
     }
 
     public class LiteDBBuider : ILiteDBBuider
     {
-        public ILiteDatabaseAsync BuildLiteDB(string connectString) => new LiteDatabaseAsync(connectString);
+        public ILiteDatabase BuildLiteDB(string connectString) => new LiteDatabase(connectString);
     }
 }

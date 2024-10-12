@@ -12,6 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Orleans.Clustering.LiteDB\Orleans.Clustering.LiteDB.csproj" />
     <ProjectReference Include="..\TC.Grains\TC.Grains.csproj" />
   </ItemGroup>
 

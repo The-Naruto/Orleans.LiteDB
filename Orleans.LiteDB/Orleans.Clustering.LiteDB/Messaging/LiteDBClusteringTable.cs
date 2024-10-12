@@ -1,4 +1,4 @@
-﻿using LiteDB.Async;
+﻿using LiteDB;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Orleans.Clustering.LiteDB.Entities;
@@ -15,7 +15,7 @@ namespace Orleans.Clustering.LiteDB.Messaging
         private readonly ILogger logger;
         private readonly LiteDBClusteringSiloOptions clusteringTableOptions;
 
-        private readonly ILiteDatabaseAsync liteDatabaseAsync;
+        private readonly ILiteDatabase liteDatabase;
 
         public LiteDBClusteringTable(
             IServiceProvider serviceProvider,
@@ -28,47 +28,50 @@ namespace Orleans.Clustering.LiteDB.Messaging
             this.logger = logger;
             this.clusteringTableOptions = clusteringOptions.Value;
             this.clusterId = clusterOptions.Value.ClusterId;
-            this.liteDatabaseAsync = liteDBBuilder.BuildLiteDB(clusteringTableOptions.ConnectionString);
+            this.liteDatabase = liteDBBuilder.BuildLiteDB(clusteringTableOptions.ConnectionString);
         }
         /// <summary>
         /// 清理所有当前集群id指定时间之前的所有
         /// </summary>
         /// <param name="beforeDate"></param>
         /// <returns></returns>
-        public async Task CleanupDefunctSiloEntries(DateTimeOffset beforeDate)
+        public Task CleanupDefunctSiloEntries(DateTimeOffset beforeDate)
         {
             if (logger.IsEnabled(LogLevel.Trace))
                 logger.LogTrace("IMembershipTable.CleanupDefunctSiloEntries called with beforeDate {beforeDate} and clusterId {ClusterId}.", beforeDate, clusterId);
             try
             {
-                ILiteCollectionAsync<MemberShip>
-                liteCollectionAsync = liteDatabaseAsync.GetCollection<MemberShip>();
+                ILiteCollection<MemberShip>
+                liteCollection = liteDatabase.GetCollection<MemberShip>();
 
-                await liteCollectionAsync.DeleteManyAsync(ms => ms.DepolymentId == clusterId && ms.IAmAliveTime < beforeDate.LocalDateTime);
+                liteCollection.DeleteMany(ms => ms.DepolymentId == clusterId && ms.IAmAliveTime < beforeDate.LocalDateTime);
+
             }
             catch (Exception ex)
             {
                 if (logger.IsEnabled(LogLevel.Debug))
                     logger.LogDebug(ex, "LiteDBClusteringTable.CleanupDefunctSiloEntries failed");
             }
+
+            return Task.CompletedTask;
         }
 
-        public async Task DeleteMembershipTableEntries(string clusterId)
+        public Task DeleteMembershipTableEntries(string clusterId)
         {
 
             if (logger.IsEnabled(LogLevel.Trace))
                 logger.LogTrace("IMembershipTable.DeleteMembershipTableEntries called with clusterId {ClusterId}.", clusterId);
             try
             {
-                ILiteCollectionAsync<MemberShip>
-              liteCollectionAsync = liteDatabaseAsync.GetCollection<MemberShip>();
+                ILiteCollection<MemberShip>
+              liteCollection = liteDatabase.GetCollection<MemberShip>();
 
-                await liteCollectionAsync.DeleteManyAsync(ms => ms.DepolymentId == clusterId);
+                liteCollection.DeleteMany(ms => ms.DepolymentId == clusterId);
 
-                ILiteCollectionAsync<MemberShipVersion>
-            shipVersion = liteDatabaseAsync.GetCollection<MemberShipVersion>();
+                ILiteCollection<MemberShipVersion>
+            shipVersion = liteDatabase.GetCollection<MemberShipVersion>();
 
-                await shipVersion.DeleteManyAsync(ms => ms.DepolymentId == clusterId);
+                shipVersion.DeleteMany(ms => ms.DepolymentId == clusterId);
 
             }
             catch (Exception ex)
@@ -77,11 +80,11 @@ namespace Orleans.Clustering.LiteDB.Messaging
                     logger.LogDebug(ex, "LiteDBClusteringTable.DeleteMembershipTableEntries failed");
                 throw;
             }
-
+            return Task.CompletedTask;
 
         }
 
-        public async Task InitializeMembershipTable(bool tryInitTableVersion)
+        public Task InitializeMembershipTable(bool tryInitTableVersion)
         {
             if (logger.IsEnabled(LogLevel.Trace)) logger.LogTrace("LiteDBClusteringTable.InitializeMembershipTable called.");
 
@@ -90,17 +93,17 @@ namespace Orleans.Clustering.LiteDB.Messaging
             // so we always have a first table version row, before this silo starts working.
             if (tryInitTableVersion)
             {
-                var wasCreated = await InitTableAsync();
+                var wasCreated = InitTable();
                 if (wasCreated)
                 {
                     logger.LogInformation("Created new table version row.");
                 }
             }
 
-
+            return Task.CompletedTask;
         }
 
-        public async Task<bool> InsertRow(MembershipEntry entry, TableVersion tableVersion)
+        public Task<bool> InsertRow(MembershipEntry entry, TableVersion tableVersion)
         {
             if (logger.IsEnabled(LogLevel.Trace))
                 logger.LogTrace(
@@ -120,20 +123,24 @@ namespace Orleans.Clustering.LiteDB.Messaging
                 throw new ArgumentNullException(nameof(tableVersion));
             }
 
+            bool result = false;
+
             try
             {
                 var memberShip = entry.ToMemberShip();
                 memberShip.DepolymentId = clusterId;
 
-                ILiteCollectionAsync<MemberShip>
-             liteCollectionAsync = liteDatabaseAsync.GetCollection<MemberShip>();
-                var exists = await liteCollectionAsync.ExistsAsync(ms => ms.DepolymentId == clusterId && ms.Address == memberShip.Address && ms.Port == memberShip.Port && ms.Generation == memberShip.Generation);
+                ILiteCollection<MemberShip>
+             liteCollection = liteDatabase.GetCollection<MemberShip>();
+                result = liteCollection.Exists(ms => ms.DepolymentId == clusterId && ms.Address == memberShip.Address && ms.Port == memberShip.Port && ms.Generation == memberShip.Generation);
 
-                if (exists) { return true; }
+                if (!result)
+                {
+                    liteCollection.Insert(memberShip);
 
-                await liteCollectionAsync.InsertAsync(memberShip);
+                    result = IncreamentVersion();
 
-                return await IncreamentVersion();
+                }
 
             }
             catch (Exception ex)
@@ -142,34 +149,35 @@ namespace Orleans.Clustering.LiteDB.Messaging
                 throw;
             }
 
+            return Task.FromResult(result);
         }
 
-        public async Task<MembershipTableData> ReadAll()
+        public Task<MembershipTableData> ReadAll()
         {
             if (logger.IsEnabled(LogLevel.Trace)) logger.LogTrace("LiteDBClusteringTable.ReadAll called.");
+            MembershipTableData membershipTableData;
             try
             {
 
-                ILiteCollectionAsync<MemberShip>
-             liteCollectionAsync = liteDatabaseAsync.GetCollection<MemberShip>();
+                ILiteCollection<MemberShip>
+             liteCollection = liteDatabase.GetCollection<MemberShip>();
 
-                var allMS = await liteCollectionAsync.FindAllAsync();
+                var allMS = liteCollection.FindAll();
 
-                var tempData = new List<Tuple<MembershipEntry, int>>(allMS.Count());
+                var tempData = new List<Tuple<MembershipEntry, int>>();
 
 
-                ILiteCollectionAsync<MemberShipVersion>
-     shipVersion = liteDatabaseAsync.GetCollection<MemberShipVersion>();
-
-                foreach (var membership in allMS)
+                ILiteCollection<MemberShipVersion>
+     shipVersion = liteDatabase.GetCollection<MemberShipVersion>();
+                
+                foreach (var membership in allMS.ToArray())
                 {
 
-                    var tempVersion = await shipVersion.FindOneAsync(sv => sv.DepolymentId == membership.DepolymentId);
+                    var tempVersion = shipVersion.FindOne(sv => sv.DepolymentId == membership.DepolymentId);
 
                     tempData.Add(Tuple.Create(membership.ToMemberShipEntry(), tempVersion.Version));
                 }
 
-                MembershipTableData membershipTableData;
                 if (tempData.Count > 0)
                 {
                     membershipTableData = ConvertToMembershipTableData(tempData);
@@ -179,44 +187,44 @@ namespace Orleans.Clustering.LiteDB.Messaging
 
                     membershipTableData = new MembershipTableData(new TableVersion(0, "0"));
                 }
-                return membershipTableData;
             }
             catch (Exception ex)
             {
                 if (logger.IsEnabled(LogLevel.Debug)) logger.LogDebug(ex, "LiteDBClusteringTable.ReadAll failed");
                 throw;
             }
+            return Task.FromResult(membershipTableData);
         }
 
-        public async Task<MembershipTableData> ReadRow(SiloAddress key)
+        public Task<MembershipTableData> ReadRow(SiloAddress key)
         {
             if (logger.IsEnabled(LogLevel.Trace))
                 logger.LogTrace("LiteDBClusteringTable.ReadRow called with key: {Key}.", key);
+            MembershipTableData membershipTableData;
             try
             {
-                ILiteCollectionAsync<MemberShip>
-           liteCollectionAsync = liteDatabaseAsync.GetCollection<MemberShip>();
+                ILiteCollection<MemberShip>
+           liteCollection = liteDatabase.GetCollection<MemberShip>();
 
-                var allMS = await liteCollectionAsync.FindAsync(ms => ms.DepolymentId == clusterId && ms.Address == key.Endpoint.Address.ToString() && ms.Port == key.Endpoint.Port && ms.Generation == key.Generation);
+                var allMS = liteCollection.Find(ms => ms.DepolymentId == clusterId && ms.Address == key.Endpoint.Address.ToString() && ms.Port == key.Endpoint.Port && ms.Generation == key.Generation);
 
-                var tempData = new List<Tuple<MembershipEntry, int>>(allMS.Count());
+                var tempData = new List<Tuple<MembershipEntry, int>>();
 
 
-                ILiteCollectionAsync<MemberShipVersion>
-     shipVersion = liteDatabaseAsync.GetCollection<MemberShipVersion>();
+                ILiteCollection<MemberShipVersion>
+     shipVersion = liteDatabase.GetCollection<MemberShipVersion>();
                 MemberShipVersion? tempVersion = null;
-                foreach (var membership in allMS)
+                foreach (var membership in allMS.ToArray())
                 {
                     if (tempVersion == null)
                     {
 
-                        tempVersion = await shipVersion.FindOneAsync(sv => sv.DepolymentId == membership.DepolymentId);
+                        tempVersion = shipVersion.FindOne(sv => sv.DepolymentId == membership.DepolymentId);
                     }
 
 
                     tempData.Add(Tuple.Create(membership.ToMemberShipEntry(), tempVersion.Version));
                 }
-                MembershipTableData membershipTableData;
                 if (tempData.Count > 0)
                 {
                     membershipTableData = ConvertToMembershipTableData(tempData);
@@ -226,16 +234,16 @@ namespace Orleans.Clustering.LiteDB.Messaging
 
                     membershipTableData = new MembershipTableData(new TableVersion(0, "0"));
                 }
-                return membershipTableData;
             }
             catch (Exception ex)
             {
                 if (logger.IsEnabled(LogLevel.Debug)) logger.LogDebug(ex, "LiteDBClusteringTable.ReadRow failed");
                 throw;
             }
+            return Task.FromResult(membershipTableData);
         }
 
-        public async Task UpdateIAmAlive(MembershipEntry entry)
+        public Task UpdateIAmAlive(MembershipEntry entry)
         {
             if (logger.IsEnabled(LogLevel.Trace))
                 logger.LogTrace("IMembershipTable.UpdateIAmAlive called with entry {Entry}.", entry);
@@ -248,13 +256,13 @@ namespace Orleans.Clustering.LiteDB.Messaging
             {
                 var newShip = entry.ToMemberShip();
 
-                ILiteCollectionAsync<MemberShip>
-    liteCollectionAsync = liteDatabaseAsync.GetCollection<MemberShip>();
+                ILiteCollection<MemberShip>
+    liteCollection = liteDatabase.GetCollection<MemberShip>();
 
-                var old = await liteCollectionAsync.FindOneAsync(ms => ms.DepolymentId == clusterId && ms.Address == newShip.Address && ms.Port == newShip.Port && ms.Generation == newShip.Generation);
+                var old = liteCollection.FindOne(ms => ms.DepolymentId == clusterId && ms.Address == newShip.Address && ms.Port == newShip.Port && ms.Generation == newShip.Generation);
                 old.IAmAliveTime = newShip.IAmAliveTime;
 
-                await liteCollectionAsync.UpdateAsync(old);
+                liteCollection.Update(old);
             }
             catch (Exception ex)
             {
@@ -262,9 +270,10 @@ namespace Orleans.Clustering.LiteDB.Messaging
                     logger.LogDebug(ex, "LiteDBClusteringTable.UpdateIAmAlive failed");
                 throw;
             }
+            return Task.CompletedTask;
         }
 
-        public async Task<bool> UpdateRow(MembershipEntry entry, string etag, TableVersion tableVersion)
+        public Task<bool> UpdateRow(MembershipEntry entry, string etag, TableVersion tableVersion)
         {
             if (logger.IsEnabled(LogLevel.Trace)) logger.LogTrace("IMembershipTable.UpdateRow called with entry {Entry}, etag {ETag} and tableVersion {TableVersion}.", entry, etag, tableVersion);
 
@@ -283,24 +292,23 @@ namespace Orleans.Clustering.LiteDB.Messaging
                 if (logger.IsEnabled(LogLevel.Debug)) logger.LogDebug("LiteDBClusteringTable.UpdateRow aborted due to null check. TableVersion is null");
                 throw new ArgumentNullException(nameof(tableVersion));
             }
-
+            bool versinoResult = false;
             try
             {
-                var versinoResult = await IncreamentVersion();
+                versinoResult = IncreamentVersion();
                 if (!versinoResult)
                 {
-                    return versinoResult;
+                    return Task.FromResult(versinoResult);
                 }
                 var newShip = entry.ToMemberShip();
 
-                ILiteCollectionAsync<MemberShip>
-    liteCollectionAsync = liteDatabaseAsync.GetCollection<MemberShip>();
+                ILiteCollection<MemberShip> liteCollection = liteDatabase.GetCollection<MemberShip>();
 
-                var old = await liteCollectionAsync.FindOneAsync(ms => ms.DepolymentId == clusterId && ms.Address == newShip.Address && ms.Port == newShip.Port && ms.Generation == newShip.Generation);
+                var old = liteCollection.FindOne(ms => ms.DepolymentId == clusterId && ms.Address == newShip.Address && ms.Port == newShip.Port && ms.Generation == newShip.Generation);
                 old.Status = newShip.Status;
                 old.SuspectTimes = newShip.SuspectTimes;
                 old.IAmAliveTime = newShip.IAmAliveTime;
-                return await liteCollectionAsync.UpdateAsync(old);
+                versinoResult = liteCollection.Update(old);
 
             }
             catch (Exception ex)
@@ -308,7 +316,7 @@ namespace Orleans.Clustering.LiteDB.Messaging
                 if (logger.IsEnabled(LogLevel.Debug)) logger.LogDebug(ex, "LiteDBClusteringTable.UpdateRow failed");
                 throw;
             }
-
+            return Task.FromResult(versinoResult);
         }
 
         private MembershipTableData ConvertToMembershipTableData(IEnumerable<Tuple<MembershipEntry, int>> ret)
@@ -324,34 +332,33 @@ namespace Orleans.Clustering.LiteDB.Messaging
         }
 
 
-        private async Task<bool> IncreamentVersion()
+        private bool IncreamentVersion()
         {
 
-            ILiteCollectionAsync<MemberShipVersion>
-     shipVersion = liteDatabaseAsync.GetCollection<MemberShipVersion>();
+            ILiteCollection<MemberShipVersion>
+     shipVersion = liteDatabase.GetCollection<MemberShipVersion>();
 
-            var res = await shipVersion.FindOneAsync(ms => ms.DepolymentId == clusterId);
-
+            var res = shipVersion.FindOne(ms => ms.DepolymentId == clusterId);
             res.Version++;
 
-            return await shipVersion.UpdateAsync(res);
+            return shipVersion.Update(res);
         }
 
 
 
-        private async Task<bool> InitTableAsync()
+        private bool InitTable()
         {
             try
             {
-                ILiteCollectionAsync<MemberShipVersion>
-       shipVersion = liteDatabaseAsync.GetCollection<MemberShipVersion>();
-                var res = await shipVersion.ExistsAsync(ms => ms.DepolymentId == clusterId);
+                ILiteCollection<MemberShipVersion>
+       shipVersion = liteDatabase.GetCollection<MemberShipVersion>();
+                var res = shipVersion.Exists(ms => ms.DepolymentId == clusterId);
                 if (res)
                 {
                     return true;
                 }
 
-                await shipVersion.InsertAsync(new MemberShipVersion() { DepolymentId = clusterId, TimeStamp = DateTime.Now, Version = 0 });
+                shipVersion.Insert(new MemberShipVersion() { DepolymentId = clusterId, TimeStamp = DateTime.Now, Version = 0 });
 
                 return true;
             }

@@ -1,5 +1,4 @@
-﻿using LiteDB.Async;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Orleans.Clustering.LiteDB.Messaging;
 using Orleans.Clustering.LiteDB.Options;

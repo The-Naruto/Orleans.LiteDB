@@ -1,5 +1,6 @@
 ﻿// See https://aka.ms/new-console-template for more information
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Orleans.Clustering.LiteDB;
 using Orleans.Clustering.LiteDB.Options;
 using Orleans.Configuration;
@@ -8,7 +9,10 @@ using System.Net.Sockets;
 
 var hostBuilder = Host.CreateDefaultBuilder();
 
-
+hostBuilder.ConfigureLogging((context, logging) =>
+{
+  //  logging.Configure()
+});
 
 hostBuilder.UseOrleans(siloBuilder =>
      siloBuilder
@@ -16,7 +20,7 @@ hostBuilder.UseOrleans(siloBuilder =>
                 //
                 .UseLiteDBClustering((LiteDBClusteringSiloOptions option) =>
                  {
-                     option.ConnectionString = "Filename= D:\\LiteDBClustering2.db;Mode=Shared;";
+                     option.ConnectionString = "Filename= D:\\LiteDBClustering2.db;connection=Shared;";
                  })
                 
                 .Configure<ClusterOptions>(options =>

@@ -1,4 +1,5 @@
-﻿using Orleans.Runtime;
+﻿using LiteDB;
+using Orleans.Runtime;
 using Orleans.Serialization.WireProtocol;
 using System.Net;
 using System.Runtime.CompilerServices;
@@ -8,6 +9,12 @@ namespace Orleans.Clustering.LiteDB.Entities
 {
     public class MemberShip
     {
+        public MemberShip() 
+        {
+            Id = ObjectId.NewObjectId();
+        }
+        //   Objectid must be present, otherwise it cannot be updated
+        public ObjectId Id { get; set; }
         public string DepolymentId { get; set; }
         public string Address { get; set; }
         public int Port { get; set; }
@@ -44,7 +51,7 @@ namespace Orleans.Clustering.LiteDB.Entities
                 
             };
 
-            if (membershipEntry.SuspectTimes.Count>0)
+            if (membershipEntry.SuspectTimes != null && membershipEntry.SuspectTimes.Count>0)
             {
                 var timeList = new StringBuilder();
                 bool first = true;

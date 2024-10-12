@@ -1,4 +1,4 @@
-﻿using LiteDB.Async;
+﻿using LiteDB;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Orleans.Clustering.LiteDB.Entities;
@@ -19,7 +19,7 @@ namespace Orleans.Clustering.LiteDB.Messaging
         private readonly TimeSpan _maxStaleness;
         private readonly ILiteDBBuider liteDBBuilder;
 
-        private ILiteDatabaseAsync liteDatabaseAsync;
+        private ILiteDatabase liteDatabaseAsync;
 
         public LiteDBGatewayListProvider(
           ILogger<LiteDBGatewayListProvider> logger,
@@ -43,21 +43,21 @@ namespace Orleans.Clustering.LiteDB.Messaging
 
         public bool IsUpdatable => true;
 
-        public async Task<IList<Uri>> GetGateways()
+        public Task<IList<Uri>> GetGateways()
         {
             if (_logger.IsEnabled(LogLevel.Trace)) _logger.LogTrace("LiteDBClusteringTable.GetGateways called.");
-            List<Uri> uri = new List<Uri>();
+            IList<Uri> uri = new List<Uri>();
             try
             {
                 var all = liteDatabaseAsync.GetCollection<MemberShip>();
-                var res = await all.FindAsync(ms => ms.DepolymentId == this._clusterId && ms.Status == (int)SiloStatus.Active && ms.Port > 0);
-                foreach (var item in res)
+                var res = all.Find(ms => ms.DepolymentId == this._clusterId && ms.Status == (int)SiloStatus.Active && ms.Port > 0);
+                foreach (var item in res.ToArray())
                 {
-                    var siloAddr = SiloAddress.New(IPAddress.Parse(item.Address), item.Port, item.Generation);
+                    var siloAddr = SiloAddress.New(IPAddress.Parse(item.Address), item.ProxyPort, item.Generation);
                     uri.Add(siloAddr.ToGatewayUri());
-                } 
+                }
 
-                return uri;
+                return Task.FromResult(uri);
             }
             catch (Exception ex)
             {
